@@ -1,0 +1,131 @@
+1. Practical objective
+By the end of this practical, you will be able to create and manage:
+1. Custom VPC
+2. Public Subnets
+3. Private Subnets
+4. Internet Gateway (IGW)
+5. Public Route Table
+6. Private Route Table
+7. Route Table Associations
+8. Security Groups
+9. EC2 Instance inside the custom VPC
+
+Prepare the new practical directory
+mkdir -p ~/terraform-practicals/practical-02-networking
+cd ~/terraform-practicals/practical-02-networking
+aws sts get-caller-identity
+
+onfigure AWS region
+Run:
+aws configure set region ap-south-1
+ aws configure get region
+
+Step 4: Verify EC2 access
+aws ec2 describe-vpcs --region ap-south-1 --output table
+
+Create provider.tf
+First, make sure you are inside:
+cd ~/terraform-practicals/practical-02-networking
+
+nano provider.tf
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "ap-south-1"
+}
+
+nitialize Terraform
+Execute:
+terraform init
+terraform validate
+
+## Create a Custom VPC
+
+We are using:
+10.0.0.0/16
+We will divide this network into smaller subnets later.
+VPC: 10.0.0.0/16
+       |
+       |-----------------------|
+       |                       |
+Public Subnet              Private Subnet
+10.0.1.0/24                10.0.2.0/24
+
+## Create variables.tf
+nano variables.tf
+
+variable "vpc_cidr" {
+  description = "CIDR block for the custom VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "vpc_name" {
+  description = "Name of the custom VPC"
+  type        = string
+  default     = "Terraform-VPC"
+}
+
+variable "aws_region" {
+  description = "AWS deployment region"
+  type        = string
+  default     = "ap-south-1"
+}
+
+## Create main.tf
+nano main.tf
+
+# Create Custom VPC
+
+resource "aws_vpc" "my_vpc" {
+
+  cidr_block = var.vpc_cidr
+
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name        = var.vpc_name
+    Environment = "Learning"
+    ManagedBy   = "Terraform"
+  }
+}
+
+## Create outputs.tf
+Run:
+nano outputs.tf
+
+output "vpc_id" {
+  description = "ID of the custom VPC"
+  value       = aws_vpc.my_vpc.id
+}
+
+output "vpc_cidr" {
+  description = "CIDR block of the custom VPC"
+  value       = aws_vpc.my_vpc.cidr_block
+}
+
+output "vpc_name" {
+  description = "Name of the custom VPC"
+  value       = aws_vpc.my_vpc.tags["Name"]
+}
+
+
+Format and validate
+Run:
+terraform fmt
+
+Then:
+terraform validate
+terraform plan
+terraform apply
+
+
