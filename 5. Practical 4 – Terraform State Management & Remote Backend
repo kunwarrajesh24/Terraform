@@ -1,0 +1,160 @@
+This is arguably one of the most important topics in professional Terraform implementation.
+What we will learn
+1. Understanding Terraform State (terraform.tfstate).
+2. How Terraform tracks AWS resources.
+3. Understanding desired state vs. actual state.
+4. Terraform state inspection.
+5. terraform state list.
+6. terraform state show.
+7. Understanding infrastructure drift.
+8. Terraform import.
+9. Creating an S3 remote backend.
+10. Remote state management.
+11. State locking using S3 lock files.
+12. Terraform workspaces.
+
+Why is this important?
+Imagine five DevOps engineers are working on the same AWS infrastructure.
+
+If each engineer maintains a separate local state file, they may have inconsistent information about the infrastructure.
+
+Terraform remote state helps teams maintain a shared state file.
+
+For example:
+             DEVOPS TEAM
+                  |
+        ---------------------
+        |         |         |
+      User 1    User 2    User 3
+        |         |         |
+        ---------------------
+                  |
+              TERRAFORM
+                  |
+             AWS PROVIDER
+                  |
+             AWS RESOURCES
+                  |
+              S3 BACKEND
+            (terraform.tfstate)
+
+
+Prepare the working directory
+Run:
+mkdir -p ~/terraform-practicals/practical-04-state
+cd ~/terraform-practicals/practical-04-state
+pwd
+
+Verify:
+terraform version
+aws sts get-caller-identity
+
+Verify AWS region
+aws configure get region
+ls -la
+
+What we will build in Practical 4
+Our learning sequence will be:
+Stage	Topic
+1	Understanding local Terraform state
+2	Creating an EC2 instance and examining terraform.tfstate
+3	Inspecting state using Terraform commands
+4	Understanding infrastructure drift
+5	Importing an existing AWS resource
+6	Creating an S3 bucket for remote state
+7	Configuring S3 backend
+8	Enabling state locking and versioning
+9	Understanding Terraform workspaces
+
+Create provider.tf
+nano provider.tf
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "ap-south-1"
+}
+
+Create main.tf
+nano main.tf
+
+Paste:
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+resource "aws_instance" "state_demo" {
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = "t3.micro"
+
+  subnet_id = "subnet-0be15353ff9fc6eb3"
+
+  tags = {
+    Name      = "Terraform-State-Demo"
+    ManagedBy = "Terraform"
+  }
+}
+
+Initialize Terraform
+terraform init
+terraform fmt
+terraform validate
+terraform plan
+terraform apply
+
+Observe Terraform State
+After successful creation, execute:
+Command 1
+ls -l
+
+Command 2
+terraform state list
+
+Command 3
+terraform state show aws_instance.state_demo
+
+This displays detailed information about the EC2 instance recorded in Terraform state.
+
+Command 4
+cat terraform.tfstate
+
+terraform plan
+
+First state management command
+Now execute:
+terraform state list
+
+Inspect the EC2 resource
+Execute:
+terraform state show aws_instance.state_demo
+
+aws ec2 describe-instances \
+  --region ap-south-1 \
+  --filters "Name=tag:Name,Values=Terraform-State-Demo" \
+  --query "Reservations[*].Instances[*].[InstanceId,InstanceType,State.Name,PrivateIpAddress,PublicIpAddress]" \
+  --output table
+---------------------------------------------------------------------------------
+|                               DescribeInstances                               |
++----------------------+-----------+----------+---------------+-----------------+
+|  i-0085087d8a4cea024 |  t3.micro |  running |  172.31.3.201 |  13.233.128.75  |
++----------------------+-----------+----------+---------------+-----------------+
+
