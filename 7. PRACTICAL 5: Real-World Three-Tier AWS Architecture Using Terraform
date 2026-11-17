@@ -1,0 +1,742 @@
+This will be our most comprehensive Terraform practical. We will build infrastructure similar to what organizations use to host production applications.
+1. What are we going to build?
+We will deploy a three-tier architecture on AWS.
+
+Three tiers
+| Tier | Components | Responsibility |
+| Presentation | Application Load Balancer | Receives user requests |
+| Application | EC2 instances, Auto Scaling Group | Runs the application |
+| Database | Amazon RDS | Stores application data |
+
+                  INTERNET USERS
+                        |
+                        |
+                INTERNET GATEWAY
+                        |
+                        |
+               APPLICATION LOAD
+                   BALANCER
+                        |
+             ----------------------
+             |                    |
+        PUBLIC SUBNET 1       PUBLIC SUBNET 2
+          ap-south-1a           ap-south-1b
+             |                    |
+             ----------------------
+                        |
+                  AUTO SCALING
+                     GROUP
+                        |
+             ----------------------
+             |                    |
+       PRIVATE SUBNET 1      PRIVATE SUBNET 2
+             |                    |
+          EC2 APP              EC2 APP
+             |                    |
+             ----------------------
+                        |
+                   RDS DATABASE
+                        |
+                PRIVATE DB SUBNETS
+
+ We will use multiple Availability Zones to improve availability.
+ | No. | Topic |
+|---|---|
+| 1 | Custom VPC and networking |
+| 2 | Public and private subnets |
+| 3 | Internet Gateway and route tables |
+| 4 | NAT Gateway concepts |
+| 5 | Security Groups and network security |
+| 6 | IAM roles and instance profiles |
+| 7 | Application Load Balancer |
+| 8 | EC2 Launch Template |
+| 9 | Auto Scaling Group |
+| 10 | RDS database |
+| 11 | Terraform modules |
+| 12 | Remote state using S3 |
+| 13 | Variables, outputs and dependencies |
+
+Project directory structure
+We will create a professional Terraform project:
+
+practical-05-three-tier/
+│
+├── provider.tf
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── terraform.tfvars
+│
+├── modules/
+│   ├── vpc/
+│   ├── security/
+│   ├── alb/
+│   ├── ec2/
+│   └── rds/
+│
+└── environments/
+    ├── dev/
+    └── prod/
+
+    Prepare the working directory
+Run:
+mkdir -p ~/terraform-practicals/practical-05-three-tier
+cd ~/terraform-practicals/practical-05-three-tier
+pwd
+
+Create the module directories:
+mkdir -p modules/vpc
+mkdir -p modules/security
+mkdir -p modules/alb
+mkdir -p modules/ec2
+mkdir -p modules/rds
+
+tree
+
+practical-05-three-tier/
+│
+└── modules/
+    ├── vpc/
+    ├── security/
+    ├── alb/
+    ├── ec2/
+    └── rds/
+
+    Configure Terraform
+Let's create our first file.
+
+Execute:
+nano provider.tf
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "ap-south-1"
+}
+
+Define input variables
+Create:
+nano variables.tf
+
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "ap-south-1"
+}
+
+variable "project_name" {
+  description = "Project name"
+  type        = string
+  default     = "three-tier-app"
+}
+
+variable "vpc_cidr" {
+  description = "VPC CIDR block"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "instance_type" {
+  description = "Application EC2 instance type"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "db_instance_class" {
+  description = "RDS instance class"
+  type        = string
+  default     = "db.t3.micro"
+}
+
+Create terraform.tfvars
+Run:
+nano terraform.tfvars
+Paste:
+aws_region        = "ap-south-1"
+project_name      = "three-tier-app"
+vpc_cidr          = "10.0.0.0/16"
+instance_type     = "t3.micro"
+db_instance_class = "db.t3.micro"
+
+Initialize Terraform
+Execute:
+terraform init
+
+Then:
+terraform fmt -recursive
+
+Validate:
+terraform validate
+
+Practical 5 – Stage 2: Build the VPC Networking Module
+Now we will create the networking foundation for our three-tier architecture.
+
+| Subnet | CIDR | Availability Zone | Type |
+|---|---|---|---|
+| Public-1 | 10.0.1.0/24 | ap-south-1a | Public |
+| Public-2 | 10.0.2.0/24 | ap-south-1b | Public |
+| App-Private-1 | 10.0.11.0/24 | ap-south-1a | Private |
+| App-Private-2 | 10.0.12.0/24 | ap-south-1b | Private |
+| DB-Private-1 | 10.0.21.0/24 | ap-south-1a | Private |
+| DB-Private-2 | 10.0.22.0/24 | ap-south-1b | Private |
+
+Our VPC CIDR:
+10.0.0.0/16
+
+All six subnet CIDRs belong to this VPC and do not overlap.
+
+The traffic design will be:
+
+                     INTERNET
+                         |
+                         |
+                 INTERNET GATEWAY
+                         |
+              -----------------------
+              |                     |
+         PUBLIC SUBNET 1       PUBLIC SUBNET 2
+          ap-south-1a           ap-south-1b
+              |                     |
+              -----------------------
+                         |
+                   LOAD BALANCER
+                         |
+              -----------------------
+              |                     |
+        PRIVATE APP 1          PRIVATE APP 2
+              |                     |
+              -----------------------
+                         |
+                    DATABASE
+              -----------------------
+              |                     |
+          PRIVATE DB 1          PRIVATE DB 2
+
+
+          reate VPC module variables
+Run:
+nano modules/vpc/variables.tf
+
+variable "project_name" {
+  description = "Project name used for resource tagging"
+  type        = string
+}
+
+variable "vpc_cidr" {
+  description = "CIDR block for the VPC"
+  type        = string
+}
+
+variable "availability_zones" {
+  description = "Availability zones for the infrastructure"
+  type        = list(string)
+}
+
+Create the VPC module main.tf
+Run:
+nano modules/vpc/main.tf
+
+# Create VPC
+
+resource "aws_vpc" "main" {
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name    = "${var.project_name}-vpc"
+    Project = var.project_name
+  }
+}
+
+# Create Internet Gateway
+
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${var.project_name}-igw"
+  }
+}
+
+# Public Subnet 1
+
+resource "aws_subnet" "public_1" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = var.availability_zones[0]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.project_name}-public-1"
+    Tier = "Public"
+  }
+}
+
+# Public Subnet 2
+
+resource "aws_subnet" "public_2" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = var.availability_zones[1]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "${var.project_name}-public-2"
+    Tier = "Public"
+  }
+}
+
+# Private Application Subnet 1
+
+resource "aws_subnet" "app_private_1" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.11.0/24"
+  availability_zone = var.availability_zones[0]
+
+  tags = {
+    Name = "${var.project_name}-app-private-1"
+    Tier = "Application"
+  }
+}
+
+# Private Application Subnet 2
+
+resource "aws_subnet" "app_private_2" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.12.0/24"
+  availability_zone = var.availability_zones[1]
+
+  tags = {
+    Name = "${var.project_name}-app-private-2"
+    Tier = "Application"
+  }
+}
+
+# Private Database Subnet 1
+
+resource "aws_subnet" "db_private_1" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.21.0/24"
+  availability_zone = var.availability_zones[0]
+
+  tags = {
+    Name = "${var.project_name}-db-private-1"
+    Tier = "Database"
+  }
+}
+
+# Private Database Subnet 2
+
+resource "aws_subnet" "db_private_2" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.22.0/24"
+  availability_zone = var.availability_zones[1]
+
+  tags = {
+    Name = "${var.project_name}-db-private-2"
+    Tier = "Database"
+  }
+}
+
+# Public Route Table
+
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+
+  tags = {
+    Name = "${var.project_name}-public-rt"
+  }
+}
+
+# Associate Public Subnet 1
+
+resource "aws_route_table_association" "public_1" {
+  subnet_id      = aws_subnet.public_1.id
+  route_table_id = aws_route_table.public.id
+}
+
+# Associate Public Subnet 2
+
+resource "aws_route_table_association" "public_2" {
+  subnet_id      = aws_subnet.public_2.id
+  route_table_id = aws_route_table.public.id
+}
+
+# Private Route Table
+
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${var.project_name}-private-rt"
+  }
+}
+
+# Associate Application Subnets
+
+resource "aws_route_table_association" "app_private_1" {
+  subnet_id      = aws_subnet.app_private_1.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "app_private_2" {
+  subnet_id      = aws_subnet.app_private_2.id
+  route_table_id = aws_route_table.private.id
+}
+
+# Associate Database Subnets
+
+resource "aws_route_table_association" "db_private_1" {
+  subnet_id      = aws_subnet.db_private_1.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "db_private_2" {
+  subnet_id      = aws_subnet.db_private_2.id
+  route_table_id = aws_route_table.private.id
+}
+
+Create VPC module outputs
+Run:
+nano modules/vpc/outputs.tf
+
+output "vpc_id" {
+  value = aws_vpc.main.id
+}
+
+output "public_subnet_ids" {
+  value = [
+    aws_subnet.public_1.id,
+    aws_subnet.public_2.id
+  ]
+}
+
+output "app_private_subnet_ids" {
+  value = [
+    aws_subnet.app_private_1.id,
+    aws_subnet.app_private_2.id
+  ]
+}
+
+output "db_private_subnet_ids" {
+  value = [
+    aws_subnet.db_private_1.id,
+    aws_subnet.db_private_2.id
+  ]
+}
+
+Call the VPC module from root main.tf
+Open:
+nano main.tf
+
+module "vpc" {
+  source = "./modules/vpc"
+
+  project_name = var.project_name
+  vpc_cidr     = var.vpc_cidr
+
+  availability_zones = [
+    "ap-south-1a",
+    "ap-south-1b"
+  ]
+}
+
+
+Create root outputs.tf
+Run:
+nano outputs.tf
+
+output "vpc_id" {
+  description = "ID of the custom VPC"
+  value       = module.vpc.vpc_id
+}
+
+output "public_subnet_ids" {
+  description = "IDs of public subnets"
+  value       = module.vpc.public_subnet_ids
+}
+
+output "app_private_subnet_ids" {
+  description = "IDs of application private subnets"
+  value       = module.vpc.app_private_subnet_ids
+}
+
+output "db_private_subnet_ids" {
+  description = "IDs of database private subnets"
+  value       = module.vpc.db_private_subnet_ids
+}
+
+Validate the configuration
+Before creating infrastructure, check that both Availability Zones exist:
+aws ec2 describe-availability-zones \
+  --region ap-south-1 \
+  --query "AvailabilityZones[?State=='available'].ZoneName" \
+  --output table
+
+---------------------------
+|DescribeAvailabilityZones|
++-------------------------+
+|  ap-south-1a            |
+|  ap-south-1b            |
+|  ap-south-1c            |
++-------------------------+
+
+Then execute:
+terraform fmt -recursive
+terraform init
+terraform validate
+terraform plan
+
+Our VPC module should propose:
+- 1 VPC
+- 1 Internet Gateway
+- 6 Subnets
+- 2 Route Tables
+- 6 Route Table Associations
+
+ terraform apply
+
+ Practical 5 – Stage 3: Security Groups Using Terraform Modules.
+                 INTERNET USERS
+                       |
+                       | HTTP : 80
+                       |
+                       v
+              +------------------+
+              |    ALB-SG        |
+              |  Port 80         |
+              +------------------+
+                       |
+                       | HTTP : 80
+                       | Only from ALB-SG
+                       v
+              +------------------+
+              |    APP-SG        |
+              |  Port 80         |
+              +------------------+
+                       |
+                       | MySQL : 3306
+                       | Only from APP-SG
+                       v
+              +------------------+
+              |    DB-SG         |
+              |  Port 3306       |
+              +------------------+
+                       |
+                       v
+                  RDS DATABASE
+
+
+ | Security Group | Port | Protocol | Allowed source |
+| ALB-SG | 80 | TCP | `0.0.0.0/0` |
+| APP-SG | 80 | TCP | ALB Security Group |
+| DB-SG | 3306 | TCP | APP Security Group |
+
+Verify that your VPC exists
+Before creating Security Groups, execute:
+cd ~/terraform-practicals/practical-05-three-tier
+
+Run:
+terraform output -raw vpc_id
+
+If the VPC was successfully deployed, you should get an ID similar to:
+vpc-0123456789abcdef0
+
+You can also verify through AWS CLI:
+aws ec2 describe-vpcs \
+  --region ap-south-1 \
+  --filters "Name=tag:Name,Values=three-tier-app-vpc" \
+  --query "Vpcs[*].[VpcId,CidrBlock,State]" \
+  --output table
+------------------------------------------------------
+|                    DescribeVpcs                     |
++------------------------+---------------+------------+
+|  vpc-0ad3d07f33ba93569 |  10.0.0.0/16  |  available |
++------------------------+---------------+------------+
+
+Create Security Groups module
+Our project already contains:
+modules/
+├── vpc/
+├── security/
+├── alb/
+├── ec2/
+└── rds/
+We will now work inside modules/security/.
+Step 4.1: Create variables.tf
+nano modules/security/variables.tf
+
+variable "vpc_id" {
+  description = "VPC ID where security groups will be created"
+  type        = string
+}
+
+variable "project_name" {
+  description = "Project name for resource tagging"
+  type        = string
+}
+
+Create main.tf
+nano modules/security/main.tf
+
+# =========================================
+# 1. ALB Security Group
+# =========================================
+
+resource "aws_security_group" "alb_sg" {
+
+  name        = "${var.project_name}-alb-sg"
+  description = "Allow HTTP traffic from internet"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "Allow HTTP from internet"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    description = "Allow outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-alb-sg"
+  }
+}
+
+
+# =========================================
+# 2. Application Security Group
+# =========================================
+
+resource "aws_security_group" "app_sg" {
+
+  name        = "${var.project_name}-app-sg"
+  description = "Allow HTTP only from ALB"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description     = "Allow HTTP from ALB"
+    from_port       = 80
+    to_port         = 80
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb_sg.id]
+  }
+
+  egress {
+    description = "Allow outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-app-sg"
+  }
+}
+
+
+# =========================================
+# 3. Database Security Group
+# =========================================
+
+resource "aws_security_group" "db_sg" {
+
+  name        = "${var.project_name}-db-sg"
+  description = "Allow MySQL only from application servers"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description     = "Allow MySQL from application servers"
+    from_port       = 3306
+    to_port         = 3306
+    protocol        = "tcp"
+    security_groups = [aws_security_group.app_sg.id]
+  }
+
+  egress {
+    description = "Allow outbound traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-db-sg"
+  }
+}
+
+Create outputs.tf
+Run:
+nano modules/security/outputs.tf
+
+Call the Security Groups module
+Open the root main.tf:
+nano main.tf
+
+Your root main.tf should now contain both modules:
+
+# =========================================
+# VPC MODULE
+# =========================================
+
+module "vpc" {
+  source = "./modules/vpc"
+
+  project_name = var.project_name
+  vpc_cidr     = var.vpc_cidr
+
+  availability_zones = [
+    "ap-south-1a",
+    "ap-south-1b"
+  ]
+}
+
+
+# =========================================
+# SECURITY GROUP MODULE
+# =========================================
+
+module "security" {
+  source = "./modules/security"
+
+  vpc_id       = module.vpc.vpc_id
+  project_name = var.project_name
+}
+
+terraform init
+terraform fmt -recursive
+terraform validate
+terraform plan
+terraform apply
+
+
+
+
+
+
+  
+ 
+
+ 
