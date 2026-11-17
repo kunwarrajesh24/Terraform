@@ -1,0 +1,92 @@
+We will go with t3.micro 
+Step 1: Check Linux distribution
+cat /etc/os-release
+
+Step 2: Check system architecture
+uname -m
+
+Possible output:
+x86_64 or aarch64
+
+This tells us whether your EC2 instance uses an x86-64 or ARM-based processor.
+Step 3: Check CPU
+nproc
+
+This displays the number of available processing units.
+Step 4: Check RAM
+free -h
+
+Step 5: Check disk space
+df -h
+
+Step 6: Check AWS CLI
+sudo snap install aws-cli --classic
+aws --version
+
+We will need AWS CLI later to verify that Terraform successfully creates AWS resources.
+
+Practical 2 – Install Terraform
+sudo apt update
+sudo apt upgrade
+
+Install the required packages:
+sudo apt install -y gnupg wget
+
+Download and register the HashiCorp signing key:
+wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+Add the official repository:
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(grep -oP '(?<=UBUNTU_CODENAME=).*' /etc/os-release || lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+
+Update package information:
+sudo apt update
+sudo apt upgrade
+
+Install Terraform:
+sudo apt install terraform -y
+
+Verify installation:
+terraform version
+
+Practical 3 – Your First Terraform Program
+Step 1: Create a project directory
+mkdir terraform-practicals
+Move inside:
+cd terraform-practicals
+
+Create your first file:
+nano main.tf
+
+resource "local_file" "hello" {
+
+  filename = "hello.txt"
+
+  content = "Hello! I am learning Terraform."
+
+}
+
+Step 4: Initialize Terraform
+terraform init
+
+Step 5: Validate configuration
+terraform validate
+
+Step 6: Create an execution plan
+terraform plan
+
+Step 7: Apply configuration
+terraform apply
+
+Step 8: Verify
+ls
+
+You should see:
+main.tf
+hello.txt
+
+Read the file:
+cat hello.txt
+
+Step 9: Destroy the resource
+terraform destroy
+ls
