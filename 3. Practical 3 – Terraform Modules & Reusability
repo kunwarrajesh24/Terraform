@@ -1,0 +1,308 @@
+This practical shows how professional DevOps engineers organize Terraform projects.
+What we will cover
+Our learning objectives
+1. Understanding Terraform modules.
+2. Root module vs. child module.
+3. Creating reusable EC2 modules.
+4. Creating reusable VPC modules.
+5. Input variables and output values.
+6. Using count to create multiple EC2 instances.
+7. Using for_each to create multiple resources.
+8. Conditional expressions.
+9. Dynamic blocks.
+10. Building a reusable infrastructure project.
+
+Architecture preview
+          ROOT MODULE
+               |
+       -----------------
+       |               |
+    VPC MODULE     EC2 MODULE
+       |               |
+    AWS VPC         EC2 Instance
+       |               |
+    Subnets         Security Group
+       |
+    Route Tables
+
+Why is this important?
+
+Imagine your organization needs 20 EC2 instances across different environments.
+
+Would you write the same EC2 configuration 20 times?
+
+No!
+
+You create one reusable module and call it wherever required.
+
+That is the real power of Terraform modules.
+
+## Project architecture
+terraform-practical-03/
+│
+├── provider.tf
+├── main.tf
+├── variables.tf
+├── outputs.tf
+│
+└── modules/
+    │
+    ├── vpc/
+    │   ├── main.tf
+    │   ├── variables.tf
+    │   └── outputs.tf
+    │
+    └── ec2/
+        ├── main.tf
+        ├── variables.tf
+        └── outputs.tf
+
+Step 1: Prepare your working environment
+Run:
+mkdir -p ~/terraform-practicals/practical-03-modules
+cd ~/terraform-practicals/practical-03-modules
+pwd
+
+Verify AWS authentication:
+aws sts get-caller-identity
+
+1. Root Module
+
+The root module is the main working directory from which you execute Terraform commands.
+
+For our practical:
+practical-03-modules/
+
+2. Child Module
+
+A child module is a module called from another module.
+
+For example:
+practical-03-modules/
+│
+├── main.tf
+├── provider.tf
+├── variables.tf
+├── outputs.tf
+│
+└── modules/
+    └── ec2/
+        ├── main.tf
+        ├── variables.tf
+        └── outputs.tf
+
+Here:
+- Root module calls the EC2 child module.
+- Child module contains the actual EC2 resource configuration.
+Part 2 – Create Your First Reusable EC2 Module
+Our objective is to create two EC2 instances using one reusable module.
+
+For demonstration:
+Instance	Name	Instance Type
+1	Web-Server	t3.micro
+2	App-Server	t3.micro
+
+
+We will use an existing public subnet in your default VPC to avoid rebuilding networking infrastructure unnecessarily.
+Step 1: Create the directory structure
+Run:
+mkdir -p modules/ec2
+
+Check:
+tree
+
+If tree is not installed:
+sudo apt install tree -y
+
+Expected structure:
+practical-03-modules/
+└── modules/
+    └── ec2/
+
+Verify Terraform:
+terraform version
+
+Create provider.tf
+From the root directory:
+nano provider.tf
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "ap-south-1"
+}
+
+Create the EC2 child module
+Open:
+nano modules/ec2/main.tf
+
+resource "aws_instance" "server" {
+  ami           = var.ami_id
+  instance_type = var.instance_type
+  subnet_id     = var.subnet_id
+
+  tags = {
+    Name        = var.server_name
+    Environment = "Learning"
+    ManagedBy   = "Terraform"
+  }
+}
+
+## Create child module variables.tf
+Run:
+nano modules/ec2/variables.tf
+
+variable "ami_id" {
+  description = "Ubuntu AMI ID"
+  type        = string
+}
+
+variable "instance_type" {
+  description = "EC2 instance type"
+  type        = string
+}
+
+variable "subnet_id" {
+  description = "Subnet where EC2 will be deployed"
+  type        = string
+}
+
+variable "server_name" {
+  description = "Name of EC2 instance"
+  type        = string
+}
+
+Create child module outputs.tf
+Run:
+nano modules/ec2/outputs.tf
+
+output "instance_id" {
+  value = aws_instance.server.id
+}
+
+output "public_ip" {
+  value = aws_instance.server.public_ip
+}
+
+output "private_ip" {
+  value = aws_instance.server.private_ip
+}
+
+
+Part 3 – Call the module from the root module
+Now comes the most important part.
+
+We will call our reusable EC2 module twice.
+## Create root variables.tf
+nano variables.tf
+
+variable "ami_id" {
+  description = "Ubuntu 24.04 AMI ID"
+  type        = string
+  default     = "ami-09d8c1e69d114dbf7"
+}
+
+variable "subnet_id" {
+  description = "Existing public subnet ID"
+  type        = string
+  default     = "subnet-0be15353ff9fc6eb3"
+}
+
+## Create root main.tf
+nano main.tf
+
+Paste:
+# First EC2 instance
+
+module "web_server" {
+  source = "./modules/ec2"
+
+  ami_id        = var.ami_id
+  instance_type = "t3.micro"
+  subnet_id     = var.subnet_id
+  server_name   = "Web-Server"
+}
+
+# Second EC2 instance
+
+module "app_server" {
+  source = "./modules/ec2"
+
+  ami_id        = var.ami_id
+  instance_type = "t3.micro"
+  subnet_id     = var.subnet_id
+  server_name   = "App-Server"
+}
+
+## Create root outputs.tf
+nano outputs.tf
+
+output "web_server_id" {
+  value = module.web_server.instance_id
+}
+
+output "web_server_public_ip" {
+  value = module.web_server.public_ip
+}
+
+output "app_server_id" {
+  value = module.app_server.instance_id
+}
+
+output "app_server_public_ip" {
+  value = module.app_server.public_ip
+}
+
+## Initialize and deploy
+Before deploying, verify that the subnet still exists:
+aws ec2 describe-subnets \
+  --region ap-south-1 \
+  --subnet-ids subnet-0be15353ff9fc6eb3
+
+## Verify that the AMI still exists:
+aws ec2 describe-images \
+  --region ap-south-1 \
+  --image-ids ami-09d8c1e69d114dbf7 \
+  --query "Images[*].[ImageId,State,Name]" \
+  --output table
+
+Then execute:
+terraform init
+terraform fmt -recursive
+terraform validate
+
+## Generate the plan:
+terraform plan
+terraform apply
+
+Verify your infrastructure
+Check Terraform outputs:
+terraform output
+
+Output:
+app_server_id = "i-03fe1104ab26173b6"
+app_server_public_ip = "13.127.49.91"
+web_server_id = "i-0829fd68a0d5948dd"
+web_server_public_ip = "13.232.202.97"
+
+
+ aws ec2 describe-instances \
+  --region ap-south-1 \
+  --filters "Name=tag:ManagedBy,Values=Terraform" \
+  --query "Reservations[*].Instances[*].[InstanceId,Tags[?Key=='Name'].Value|[0],InstanceType,State.Name]" \
+  --output table
+--------------------------------------------------------------------
+|                         DescribeInstances                        |
++----------------------+-----------------+-----------+-------------+
+|  i-0f008849a5fa2c3ad |  Terraform-EC2  |  t3.micro |  terminated |
+|  i-03fe1104ab26173b6 |  App-Server     |  t3.micro |  running    |
+|  i-0829fd68a0d5948dd |  Web-Server     |  t3.micro |  running    |
++----------------------+-----------------+-----------+-------------+
+
