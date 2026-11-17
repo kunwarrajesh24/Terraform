@@ -1,0 +1,237 @@
+We will not use the AWS Management Console to create our target EC2 instance. We will write Terraform code on our Ubuntu Linux machine and let Terraform provision the infrastructure.
+1. What will we build?
+Our objective is to create a new EC2 instance using Terraform.
+We will use the following architecture:
+       UBUNTU LINUX EC2
+       (Terraform Machine)
+               |
+               |
+         Terraform CLI
+               |
+               |
+        main.tf file
+               |
+               |
+         AWS Provider
+               |
+               |
+           AWS API
+               |
+               |
+       AWS CLOUD ACCOUNT
+               |
+               |
+         EC2 INSTANCE
+         (t3.micro)
+
+
+         What will we learn?
+By the end of this practical, you will understand:
+1. Terraform architecture.
+2. HCL configuration language.
+3. Terraform providers.
+4. Terraform resources.
+5. Terraform initialization.
+6. Terraform validation.
+7. Terraform plan.
+8. Terraform apply.
+9. Terraform state management.
+10. Terraform destroy.
+We will also modify our configuration and observe how Terraform updates infrastructure.
+
+## Configure AWS Authentication
+This is extremely important.
+
+Think about it:
+
+Terraform is running on your Ubuntu EC2 instance, but the infrastructure we want to create is inside your AWS account.
+
+How will Terraform authenticate with AWS?
+
+We need AWS credentials.
+Recommended approach: IAM Role
+Attach an IAM Instance Profile to your Terraform EC2 instance.
+The role should have the necessary EC2 permissions for our practical.
+For this first practical, permissions will include the relevant EC2 read and create operations, tagging, and termination.
+Avoid giving unrestricted administrator access when narrower permissions are sufficient.
+
+Check AWS CLI:
+aws --version
+aws sts get-caller-identity
+
+Create an IAM Role for Terraform
+Open your AWS Management Console.
+
+Go to:
+
+IAM → Roles → Create role
+
+Follow these steps.
+Step 1: Select trusted entity
+Choose:
+Trusted entity type: AWS service
+
+Select:
+Use case: EC2
+
+Click Next.
+Step 2: Attach permissions
+For our first practical, search for:
+AmazonEC2FullAccess
+
+Select it and click Next.
+
+This managed policy is convenient for our initial lab, but it grants broad EC2 permissions. For production, we should replace it with a least-privilege custom policy.
+Step 3: Name the role
+Enter:
+Terraform-EC2-Role
+
+Click Create role.
+3. Attach IAM Role to your Ubuntu EC2
+Now go to:
+
+EC2 → Instances
+
+Select your existing Ubuntu EC2 instance:
+ip-172-31-29-155
+
+Then:
+1. Click Actions.
+2. Select Security.
+3. Select Modify IAM role.
+4. Choose Terraform-EC2-Role.
+5. Click Update IAM role.
+You do not need to restart your EC2 instance.
+
+## Verify IAM Role authentication
+aws sts get-caller-identity
+
+## Create Your Terraform Project
+Step 3. Create a project directory
+mkdir terraform-practicals
+cd terraform-practicals
+
+Create our first practical directory:
+mkdir practical-01-ec2
+cd practical-01-ec2
+
+Create your first Terraform file
+nano main.tf
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "ap-south-1"
+}
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"]
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
+resource "aws_instance" "my_server" {
+  ami           = data.aws_ami.ubuntu.id
+  instance_type = "t3.micro"
+
+  subnet_id = "subnet-0be15353ff9fc6eb3"
+
+  tags = {
+    Name        = "Terraform-EC2"
+    Environment = "Learning"
+    ManagedBy   = "Terraform"
+  }
+}
+
+output "instance_id" {
+  description = "ID of the Terraform-created EC2 instance"
+  value       = aws_instance.my_server.id
+}
+
+output "public_ip" {
+  description = "Public IP address of the EC2 instance"
+  value       = aws_instance.my_server.public_ip
+}
+
+output "private_ip" {
+  description = "Private IP address of the EC2 instance"
+  value       = aws_instance.my_server.private_ip
+}
+
+output "ami_id" {
+  description = "Ubuntu AMI used for the instance"
+  value       = data.aws_ami.ubuntu.id
+}
+
+Initialize Terraform
+Execute:
+terraform init
+terraform validate
+terraform plan
+terraform apply
+terraform show
+terraform state list
+
+erify using AWS CLI
+Execute:
+aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=Terraform-EC2" \
+  --region ap-south-1
+
+  terraform fmt
+  terraform validate
+  terraform plan
+  terraform apply
+
+  ## Check availability zones
+ aws ec2 describe-availability-zones \
+  --region ap-south-1 \
+  --query "AvailabilityZones[*].ZoneName" \
+  --output table
+---------------------------
+|DescribeAvailabilityZones|
++-------------------------+
+|  ap-south-1a            |
+|  ap-south-1b            |
+|  ap-south-1c            |
++-------------------------+
+
+## Check available subnets
+aws ec2 describe-subnets \
+  --region ap-south-1 \
+  --query "Subnets[*].[SubnetId,VpcId,AvailabilityZone,MapPublicIpOnLaunch]" \
+  --output table
+-------------------------------------------------------------------------------
+|                               DescribeSubnets                               |
++---------------------------+-------------------------+--------------+--------+
+|  subnet-07bf2ffc0a169cf2e |  vpc-0b72ecd0c1e3e63b2  |  ap-south-1b |  False |
+|  subnet-0be15353ff9fc6eb3 |  vpc-0b72ecd0c1e3e63b2  |  ap-south-1a |  True  |
++---------------------------+-------------------------+--------------+--------+
+
+## Check your VPCs
+ aws ec2 describe-vpcs \
+  --region ap-south-1 \
+  --query "Vpcs[*].[VpcId,IsDefault,CidrBlock]" \
+  --output table
+----------------------------------------------------
+|                   DescribeVpcs                   |
++------------------------+-------+-----------------+
+|  vpc-0b72ecd0c1e3e63b2 |  True |  172.31.0.0/16  |
++------------------------+-------+-----------------+
+
