@@ -1,0 +1,147 @@
+What is Infrastructure Drift?
+Infrastructure Drift occurs when someone changes an AWS resource outside Terraform, causing the actual infrastructure to become different from the configuration Terraform manages.
+Real-world example
+Suppose Terraform creates an EC2 instance with these tags:
+Name      = Terraform-State-Demo
+ManagedBy = Terraform
+
+Now imagine an administrator opens the AWS Console and manually adds another tag:
+Department = DevOps
+
+Terraform configuration does not contain this additional tag.
+
+Now there is a difference between:
+- Desired state: Defined in main.tf.
+- Actual state: Existing configuration in AWS.
+This difference is called Infrastructure Drift.
+2. Understand the architecture
+       Terraform Configuration
+             (main.tf)
+                 |
+                 |
+          Desired State
+                 |
+                 |
+                 v
+            Terraform
+                 |
+                 |
+          Compare Resources
+                 |
+                 |
+                 v
+             AWS EC2
+                 |
+          Manual Modification
+                 |
+                 v
+          Actual State Changes
+                 |
+                 |
+                 v
+          Terraform Detects Drift
+
+3. Our practical objective
+We will:
+1. Identify our existing EC2 instance.
+2. Manually modify its tags using AWS CLI.
+3. Run Terraform plan.
+4. Observe how Terraform detects the difference.
+5. Understand how Terraform can reconcile the infrastructure.
+Important: We will not change the instance type or terminate the EC2 instance. This exercise only changes a tag.
+
+Step 1: Identify the EC2 instance
+Make sure you are inside Practical 4:
+
+aws ec2 describe-instances \
+  --region ap-south-1 \
+  --filters "Name=tag:Name,Values=Terraform-State-Demo" \
+  --query "Reservations[*].Instances[*].[InstanceId,State.Name]" \
+  --output table
+
+---------------------------------------
+|          DescribeInstances          |
++----------------------+--------------+
+|  i-0085087d8a4cea024 |  terminated  |
+|  i-007355bbe76c8427f |  running     |
++----------------------+--------------+
+Step 2: Add a tag manually
+Copy the instance ID from the previous output.
+
+Verify:
+
+echo "$INSTANCE_ID"
+Add the manual tag
+aws ec2 create-tags \
+  --region ap-south-1 \
+  --resources "$INSTANCE_ID" \
+  --tags Key=Department,Value=DevOps
+
+Verify the tag
+
+aws ec2 describe-tags \
+  --region ap-south-1 \
+  --filters "Name=resource-id,Values=$INSTANCE_ID" \
+  --output table
+
+---------------------------------------------------------------------------------
+|                                 DescribeTags                                  |
++-------------------------------------------------------------------------------+
+||                                    Tags                                     ||
+|+------------+-----------------------+---------------+------------------------+|
+||     Key    |      ResourceId       | ResourceType  |         Value          ||
+|+------------+-----------------------+---------------+------------------------+|
+||  Department|  i-007355bbe76c8427f  |  instance     |  DevOps                ||
+||  ManagedBy |  i-007355bbe76c8427f  |  instance     |  Terraform             ||
+||  Name      |  i-007355bbe76c8427f  |  instance     |  Terraform-State-Demo  ||
+|+------------+-----------------------+---------------+------------------------+|
+terraform plan
+terraform apply
+
+Verify the correction
+Run:
+aws ec2 describe-tags \
+  --region ap-south-1 \
+  --filters "Name=resource-id,Values=i-007355bbe76c8427f" \
+  --output table
+
+--------------------------------------------------------------------------------
+|                                 DescribeTags                                 |
++------------------------------------------------------------------------------+
+||                                    Tags                                    ||
+|+-----------+-----------------------+---------------+------------------------+|
+||    Key    |      ResourceId       | ResourceType  |         Value          ||
+|+-----------+-----------------------+---------------+------------------------+|
+||  ManagedBy|  i-007355bbe76c8427f  |  instance     |  Terraform             ||
+||  Name     |  i-007355bbe76c8427f  |  instance     |  Terraform-State-Demo  ||
+|+-----------+-----------------------+---------------+------------------------+|
+
+What have we learned?
+You have demonstrated the complete drift detection lifecycle:
+       Terraform main.tf
+              |
+              v
+        Create EC2
+              |
+              v
+         AWS EC2
+              |
+              v
+      Manual AWS Change
+        Department=DevOps
+              |
+              v
+      Infrastructure Drift
+              |
+              v
+        terraform plan
+              |
+              v
+       Drift Detected
+              |
+              v
+       terraform apply
+              |
+              v
+      Infrastructure
+       Reconciled
